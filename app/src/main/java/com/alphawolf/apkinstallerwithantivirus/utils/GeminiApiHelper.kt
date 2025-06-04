@@ -39,7 +39,7 @@ object GeminiApiHelper {
         YÊU CẦU PHÂN TÍCH
         =====================
         Dựa trên kiến thức của bạn về các ứng dụng phổ biến, hãy:
-        1. Phân loại loại ứng dụng này có thể là gì (game, camera, công cụ, xã hội…) dựa trên name app, package name và mô tả ứng dụng.
+        1. Phân loại loại ứng dụng này có thể là gì (game, camera, công cụ, báo thức, xã hội…) dựa trên name app, package name và mô tả ứng dụng.
         2. Đưa ra danh sách kì vọng các quyền và Api calls, chức năng phù hợp cho loại ứng dụng đó.
         3. Đánh giá các quyền, api call thực tế mà ứng dụng sử dụng có tương đồng với danh sách quyền , api call kì vọng hay không, có phù hợp với ứng dụng đó không.
         4. Xác định các quyền và API calls KHÔNG cần thiết cho chức năng chính và có thể là dấu hiệu của phần mềm độc hại.
@@ -50,6 +50,7 @@ object GeminiApiHelper {
         HƯỚNG DẪN ĐÁNH GIÁ
         =====================
         - Package name đáng tin cậy thường khớp với nhà phát triển thực sự.
+        - App name và Package name nếu là unknown thì auto là malware.
         - Số lượng quyền không phải là yếu tố quyết định; nhiều ứng dụng hợp pháp cần nhiều quyền
         - Các quyền bất thường chỉ đáng lo nếu trái với chức năng dự kiến
         - Ứng dụng chỉnh sửa ảnh, game… có thể hợp lý khi dùng quyền lưu trữ, đọc media

@@ -26,6 +26,7 @@ import com.alphawolf.apkinstallerwithantivirus.R
 class BatchAnalysisActivity : AppCompatActivity() {
     private lateinit var binding: ActivityBatchAnalysisBinding
     private var isAnalyzing = false
+    private var batchAnalyzer: BatchApkAnalyzer? = null
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1001
@@ -45,30 +46,18 @@ class BatchAnalysisActivity : AppCompatActivity() {
         setupUI()
     }
 
-    private fun setupActionBar() {
-        // Enable back button in action bar
-        supportActionBar?.apply {
-            setDisplayHomeAsUpEnabled(true)
-            setDisplayShowHomeEnabled(true)
-            title = "Batch APK Analysis"
-        }
-        
-        // Ẩn header có nút back trùng lặp vì đã có back button trên action bar
-        binding.llHeader.visibility = View.GONE
-        
-        // Cập nhật constraint cho phần tử phía dưới llHeader
-        val params = binding.tvInstructions.layoutParams as ConstraintLayout.LayoutParams
-        params.topToBottom = ConstraintLayout.LayoutParams.PARENT_ID
-        params.topMargin = resources.getDimensionPixelSize(R.dimen.margin_normal)
-        binding.tvInstructions.layoutParams = params
-    }
     // Handle back button press in action bar
     override fun onSupportNavigateUp(): Boolean {
-        onBackPressed()
+        handleBackPress()
         return true
     }
+    
     // Handle back button press
     override fun onBackPressed() {
+        handleBackPress()
+    }
+    
+    private fun handleBackPress() {
         if (isAnalyzing) {
             // Show confirmation dialog if analysis is running
             androidx.appcompat.app.AlertDialog.Builder(this)
@@ -76,9 +65,7 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 .setMessage("Batch analysis đang chạy. Bạn có muốn dừng và quay về không?")
                 .setPositiveButton("Dừng và quay về") { _, _ ->
                     // Stop analysis and go back
-                    isAnalyzing = false
-                    binding.progressBar.visibility = View.GONE
-                    binding.btnStartAnalysis.isEnabled = true
+                    stopAnalysis()
                     super.onBackPressed()
                 }
                 .setNegativeButton("Tiếp tục") { dialog, _ ->
@@ -89,6 +76,17 @@ class BatchAnalysisActivity : AppCompatActivity() {
             super.onBackPressed()
         }
     }
+    
+    private fun stopAnalysis() {
+        isAnalyzing = false
+        batchAnalyzer?.cleanup()
+        batchAnalyzer = null
+        binding.progressBar.visibility = View.GONE
+        binding.btnStartAnalysis.isEnabled = true
+        // Force garbage collection
+        System.gc()
+    }
+
     private fun setupUI() {
         // Default paths
         val defaultDatasetPath = File(Environment.getExternalStorageDirectory(), "apk_dataset").absolutePath
@@ -96,6 +94,10 @@ class BatchAnalysisActivity : AppCompatActivity() {
         
         binding.edtDatasetPath.setText(defaultDatasetPath)
         binding.edtOutputPath.setText(defaultOutputPath)
+        
+        // Set default batch sizes with memory-safe limits
+        binding.edtLlmBatchSize.setText("6") // Reduced from 8 for memory safety
+        binding.edtParallelBatches.setText("2") // Keep at 2 for stability
         
         binding.btnStartAnalysis.setOnClickListener {
             if (checkPermissions()) {
@@ -119,8 +121,8 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 └── malware/     (APK độc hại)
                 
                 ⚡ TỐI ƯU HÓA:
-                • LLM Batch Size: Số APK phân tích cùng lúc
-                • Parallel Batches: Số batch chạy song song
+                • LLM Batch Size: Số APK phân tích cùng lúc (khuyến nghị: 4-8)
+                • Parallel Batches: Số batch chạy song song (khuyến nghị: 1-2)
                 
                 📊 KẾT QUẢ:
                 • CSV files với kết quả phân tích
@@ -128,8 +130,9 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 • Confusion matrix và performance stats
                 
                 💡 MẸO:
-                • Batch size 8-12 cho tốc độ tối ưu
-                • Parallel batches 2-3 cho hiệu suất cao
+                • Batch size 4-6 cho thiết bị RAM thấp
+                • Batch size 6-8 cho thiết bị RAM cao
+                • Parallel batches = 1 nếu gặp lỗi memory
             """.trimIndent())
             .setPositiveButton("Hiểu rồi") { dialog, _ -> 
                 dialog.dismiss() 
@@ -144,42 +147,40 @@ class BatchAnalysisActivity : AppCompatActivity() {
             File(datasetDir, "safe").mkdir()
             File(datasetDir, "malware").mkdir()
         } catch (e: Exception) {
-            // Log lỗi nếu có
+            // Log error if needed
         }
     }
 
-    // Phương thức để mở dialog chọn thư mục
     private fun openDocumentTree() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-        startActivityForResult(intent, REQUEST_DATASET_DIR) //chưa có UI
+        startActivityForResult(intent, REQUEST_DATASET_DIR)
     }
 
-    // Xử lý kết quả khi người dùng chọn thư mục
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == REQUEST_DATASET_DIR && resultCode == RESULT_OK) {
             data?.data?.let { uri ->
-                // Lưu quyền truy cập lâu dài vào thư mục
+                // Save persistent permission to folder
                 contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
                             Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
 
-                // Lưu URI trong SharedPreferences để sử dụng lại sau này
+                // Save URI in SharedPreferences for later use
                 getSharedPreferences("batch_analysis", MODE_PRIVATE).edit()
                     .putString("dataset_uri", uri.toString())
                     .apply()
 
-                // Cập nhật UI với URI đã chọn
+                // Update UI with selected URI
                 binding.edtDatasetPath.setText(uri.toString())
 
-                // Tạo thư mục con trong thư mục đã chọn
+                // Create subfolders in selected directory
                 createRequiredSubfolders(uri)
             }
-        }else if (requestCode == MANAGE_STORAGE_REQUEST_CODE) {
-            // Kiểm tra lại quyền sau khi người dùng tương tác với màn hình cài đặt
+        } else if (requestCode == MANAGE_STORAGE_REQUEST_CODE) {
+            // Check permission again after user interaction with settings
             if (checkPermissions()) {
                 startBatchAnalysis()
             } else {
@@ -192,7 +193,6 @@ class BatchAnalysisActivity : AppCompatActivity() {
         }
     }
 
-    // Tạo các thư mục con (safe, malware) trong thư mục đã chọn
     private fun createRequiredSubfolders(parentUri: Uri) {
         val safeDirName = "safe"
         val malwareDirName = "malware"
@@ -204,11 +204,11 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 return
             }
 
-            // Kiểm tra và theo dõi trạng thái thư mục
+            // Check and track folder status
             val safeExists = documentTree.findFile(safeDirName) != null
             val malwareExists = documentTree.findFile(malwareDirName) != null
 
-            // Tạo thư mục "safe" nếu chưa tồn tại
+            // Create "safe" folder if it doesn't exist
             if (!safeExists) {
                 val created = documentTree.createDirectory(safeDirName) != null
                 if (!created) {
@@ -217,7 +217,7 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 }
             }
 
-            // Tạo thư mục "malware" nếu chưa tồn tại
+            // Create "malware" folder if it doesn't exist
             if (!malwareExists) {
                 val created = documentTree.createDirectory(malwareDirName) != null
                 if (!created) {
@@ -226,7 +226,7 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 }
             }
 
-            // Hiển thị thông báo phù hợp tùy thuộc vào tình trạng thư mục
+            // Display appropriate message based on folder status
             val message = when {
                 !safeExists && !malwareExists -> "Đã tạo thư mục safe và malware"
                 !safeExists -> "Đã tạo thư mục safe, thư mục malware đã tồn tại"
@@ -243,19 +243,19 @@ class BatchAnalysisActivity : AppCompatActivity() {
 
     private fun requestPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+ yêu cầu MANAGE_EXTERNAL_STORAGE thông qua Settings
+            // Android 11+ requires MANAGE_EXTERNAL_STORAGE through Settings
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                 intent.addCategory("android.intent.category.DEFAULT")
                 intent.data = Uri.parse("package:${applicationContext.packageName}")
                 startActivityForResult(intent, MANAGE_STORAGE_REQUEST_CODE)
             } catch (e: Exception) {
-                // Nếu không mở được trang cài đặt cụ thể, mở trang cài đặt chung
+                // If can't open specific settings page, open general settings
                 val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                 startActivityForResult(intent, MANAGE_STORAGE_REQUEST_CODE)
             }
         } else {
-            // Android 10 trở xuống
+            // Android 10 and below
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
@@ -263,15 +263,9 @@ class BatchAnalysisActivity : AppCompatActivity() {
             )
         }
     }
+
     private fun checkPermissions(): Boolean {
-        // return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-        //     ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
-        //     ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED &&
-        //     ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
-        // } else {
-        //     ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        // }
-        // Kiểm tra quyền truy cập tất cả file (All Files Access)
+        // Check All Files Access permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return Environment.isExternalStorageManager()
         } else {
@@ -301,7 +295,9 @@ class BatchAnalysisActivity : AppCompatActivity() {
                 Toast.LENGTH_LONG
             ).show()
         }
-    }    private fun startBatchAnalysis() {
+    }
+
+    private fun startBatchAnalysis() {
         if (isAnalyzing) return
 
         val datasetPathText = binding.edtDatasetPath.text.toString()
@@ -312,159 +308,185 @@ class BatchAnalysisActivity : AppCompatActivity() {
             return
         }
 
-        // Get batch configuration from UI
-        val llmBatchSize = binding.edtLlmBatchSize.text.toString().toIntOrNull() ?: 8
-        val parallelBatches = binding.edtParallelBatches.text.toString().toIntOrNull() ?: 2
+        // Get batch configuration from UI with memory-safe limits
+        val llmBatchSize = binding.edtLlmBatchSize.text.toString().toIntOrNull()?.coerceIn(1, 10) ?: 6
+        val parallelBatches = binding.edtParallelBatches.text.toString().toIntOrNull()?.coerceIn(1, 3) ?: 2
 
-        // Validate batch sizes
-        if (llmBatchSize < 1 || llmBatchSize > 20) {
-            Toast.makeText(this, "LLM batch size should be between 1-20", Toast.LENGTH_SHORT).show()
+        // Validate batch sizes with memory considerations
+        if (llmBatchSize < 1 || llmBatchSize > 10) {
+            Toast.makeText(this, "LLM batch size should be between 1-10 for memory safety", Toast.LENGTH_SHORT).show()
             return
         }
-        if (parallelBatches < 1 || parallelBatches > 5) {
-            Toast.makeText(this, "Parallel batches should be between 1-5", Toast.LENGTH_SHORT).show()
+        if (parallelBatches < 1 || parallelBatches > 3) {
+            Toast.makeText(this, "Parallel batches should be between 1-3 for memory safety", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // Kiểm tra xem đường dẫn có phải là URI từ SAF không
+        // Check if path is SAF URI
         if (datasetPathText.startsWith("content://")) {
-            // Xử lý với URI từ SAF
-            val uri = Uri.parse(datasetPathText)
-            try {
-                val documentTree = DocumentFile.fromTreeUri(this, uri)
-                if (documentTree == null || !documentTree.exists()) {
-                    Toast.makeText(this, "Invalid dataset URI", Toast.LENGTH_SHORT).show()
-                    return
-                }
-
-                // Kiểm tra cấu trúc thư mục safe và malware
-                val safeDir = documentTree.findFile("safe")
-                val malwareDir = documentTree.findFile("malware")
-
-                if (safeDir == null || malwareDir == null) {
-                    Toast.makeText(this,
-                        "Thiếu thư mục safe hoặc malware. Vui lòng chọn lại thư mục.",
-                        Toast.LENGTH_LONG).show()
-                    return
-                }
-
-                // Tìm các file APK
-                val safeApks = safeDir.listFiles().filter { it.name?.endsWith(".apk", true) == true }
-                val malwareApks = malwareDir.listFiles().filter { it.name?.endsWith(".apk", true) == true }
-
-                if (safeApks.isEmpty() && malwareApks.isEmpty()) {
-                    Toast.makeText(this,
-                        "Không tìm thấy file APK nào. Vui lòng thêm file APK vào thư mục safe và/hoặc malware.",
-                        Toast.LENGTH_LONG).show()
-                    return
-                }
-
-                // Bắt đầu phân tích với URI
-                isAnalyzing = true
-                binding.progressBar.visibility = View.VISIBLE
-                binding.btnStartAnalysis.isEnabled = false
-                binding.tvStatus.text = "Starting batch analysis..."
-
-                Toast.makeText(this,
-                    "Xử lý URI từ SAF chưa được hỗ trợ. Vui lòng sử dụng đường dẫn file thông thường.",
-                    Toast.LENGTH_LONG).show()
-
-                binding.progressBar.visibility = View.GONE
-                binding.btnStartAnalysis.isEnabled = true
-                isAnalyzing = false
-                // TODO: Triển khai phân tích với URI - cần sửa lớp BatchApkAnalyzer
-            } catch (e: Exception) {
-                binding.progressBar.visibility = View.GONE
-                binding.btnStartAnalysis.isEnabled = true
-                isAnalyzing = false
-                Toast.makeText(this, "Lỗi truy cập thư mục: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+            handleSAFPath(datasetPathText, outputPath, llmBatchSize, parallelBatches)
         } else {
-            // Xử lý với đường dẫn file thông thường như hiện tại
-            val datasetDir = File(datasetPathText)
-            if (!datasetDir.exists()) {
-                Toast.makeText(this, "Dataset directory does not exist. Creating it now.", Toast.LENGTH_LONG).show()
-                val success = datasetDir.mkdirs()
-                if (!success) {
-                    Toast.makeText(this, "Failed to create dataset directory", Toast.LENGTH_SHORT).show()
-                    return
-                }
-            } else if (!datasetDir.isDirectory) {
-                Toast.makeText(this, "Invalid dataset path - not a directory", Toast.LENGTH_SHORT).show()
+            handleRegularPath(datasetPathText, outputPath, llmBatchSize, parallelBatches)
+        }
+    }
+
+    private fun handleSAFPath(
+        datasetPathText: String,
+        outputPath: String,
+        llmBatchSize: Int,
+        parallelBatches: Int
+    ) {
+        // Handle SAF URI path
+        val uri = Uri.parse(datasetPathText)
+        try {
+            val documentTree = DocumentFile.fromTreeUri(this, uri)
+            if (documentTree == null || !documentTree.exists()) {
+                Toast.makeText(this, "Invalid dataset URI", Toast.LENGTH_SHORT).show()
                 return
             }
 
-            // Kiểm tra cấu trúc thư mục SAFE và MALWARE (không phân biệt hoa/thường)
-            val hasValidStructure = checkAndCreateDatasetStructure(datasetDir)
-            if (!hasValidStructure) {
-                return // Đã hiển thị thông báo trong hàm checkAndCreateDatasetStructure
+            // Check folder structure
+            val safeDir = documentTree.findFile("safe")
+            val malwareDir = documentTree.findFile("malware")
+
+            if (safeDir == null || malwareDir == null) {
+                Toast.makeText(this,
+                    "Thiếu thư mục safe hoặc malware. Vui lòng chọn lại thư mục.",
+                    Toast.LENGTH_LONG).show()
+                return
             }
 
-            // Kiểm tra có APK trong thư mục không
-            val safeDir = File(datasetDir, "safe")
-            val malwareDir = File(datasetDir, "malware")
+            // Find APK files
+            val safeApks = safeDir.listFiles().filter { it.name?.endsWith(".apk", true) == true }
+            val malwareApks = malwareDir.listFiles().filter { it.name?.endsWith(".apk", true) == true }
 
-            val safeApks = safeDir.listFiles { _, name -> name.endsWith(".apk", true) }?.size ?: 0
-            val malwareApks = malwareDir.listFiles { _, name -> name.endsWith(".apk", true) }?.size ?: 0
-
-            if (safeApks == 0 && malwareApks == 0) {
+            if (safeApks.isEmpty() && malwareApks.isEmpty()) {
                 Toast.makeText(this,
                     "Không tìm thấy file APK nào. Vui lòng thêm file APK vào thư mục safe và/hoặc malware.",
                     Toast.LENGTH_LONG).show()
                 return
             }
 
-            // Start analysis
-            isAnalyzing = true
-            binding.progressBar.visibility = View.VISIBLE
-            binding.btnStartAnalysis.isEnabled = false
-            binding.tvStatus.text = "Starting batch analysis..."
-            lifecycleScope.launch {
-                try {
-                    val analyzer = BatchApkAnalyzer(
-                        context = applicationContext,
-                        llmBatchSize = llmBatchSize,
-                        parallelBatchSize = parallelBatches
-                    )
-                    
-                    // Set up progress callback for real-time updates
-                    analyzer.setProgressCallback(object : BatchApkAnalyzer.ProgressCallback {
-                        override fun onProgress(current: Int, total: Int, message: String) {
-                            runOnUiThread {
-                                binding.tvStatus.text = "⚡ $message\n\n" +
-                                    "🔧 Batch Config: $llmBatchSize APKs per LLM call, $parallelBatches parallel batches\n" +
-                                    "💡 Optimization: Reduced API calls by ${((total.toFloat() / llmBatchSize) / total * 100).toInt()}%"
-                                
-                                // Update progress bar if it's not indeterminate
-                                if (total > 0) {
-                                    binding.progressBar.isIndeterminate = false
-                                    binding.progressBar.max = total
-                                    binding.progressBar.progress = current
-                                }
+            Toast.makeText(this,
+                "Xử lý URI từ SAF chưa được hỗ trợ. Vui lòng sử dụng đường dẫn file thông thường.",
+                Toast.LENGTH_LONG).show()
+
+        } catch (e: Exception) {
+            Toast.makeText(this, "Lỗi truy cập thư mục: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun handleRegularPath(
+        datasetPathText: String,
+        outputPath: String,
+        llmBatchSize: Int,
+        parallelBatches: Int
+    ) {
+        // Handle regular file path
+        val datasetDir = File(datasetPathText)
+        if (!datasetDir.exists()) {
+            Toast.makeText(this, "Dataset directory does not exist. Creating it now.", Toast.LENGTH_LONG).show()
+            val success = datasetDir.mkdirs()
+            if (!success) {
+                Toast.makeText(this, "Failed to create dataset directory", Toast.LENGTH_SHORT).show()
+                return
+            }
+        } else if (!datasetDir.isDirectory) {
+            Toast.makeText(this, "Invalid dataset path - not a directory", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Check dataset structure
+        val hasValidStructure = checkAndCreateDatasetStructure(datasetDir)
+        if (!hasValidStructure) {
+            return
+        }
+
+        // Check for APK files
+        val safeDir = File(datasetDir, "safe")
+        val malwareDir = File(datasetDir, "malware")
+
+        val safeApks = safeDir.listFiles { _, name -> name.endsWith(".apk", true) }?.size ?: 0
+        val malwareApks = malwareDir.listFiles { _, name -> name.endsWith(".apk", true) }?.size ?: 0
+
+        if (safeApks == 0 && malwareApks == 0) {
+            Toast.makeText(this,
+                "Không tìm thấy file APK nào. Vui lòng thêm file APK vào thư mục safe và/hoặc malware.",
+                Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // Start analysis
+        startAnalysisProcess(datasetPathText, outputPath, llmBatchSize, parallelBatches)
+    }
+
+    private fun startAnalysisProcess(
+        datasetPath: String,
+        outputPath: String,
+        llmBatchSize: Int,
+        parallelBatches: Int
+    ) {
+        isAnalyzing = true
+        binding.progressBar.visibility = View.VISIBLE
+        binding.progressBar.isIndeterminate = true
+        binding.btnStartAnalysis.isEnabled = false
+        binding.tvStatus.text = "Starting batch analysis..."
+
+        lifecycleScope.launch {
+            try {
+                batchAnalyzer = BatchApkAnalyzer(
+                    context = applicationContext,
+                    llmBatchSize = llmBatchSize,
+                    parallelBatchSize = parallelBatches
+                )
+                
+                // Set up progress callback for real-time updates
+                batchAnalyzer?.setProgressCallback(object : BatchApkAnalyzer.ProgressCallback {
+                    override fun onProgress(current: Int, total: Int, message: String) {
+                        runOnUiThread {
+                            binding.tvStatus.text = "⚡ $message\n\n" +
+                                "🔧 Batch Config: $llmBatchSize APKs per LLM call, $parallelBatches parallel batches\n" +
+                                "💡 Memory Optimization: Smart chunking and cleanup enabled"
+                            
+                            // Update progress bar if it's not indeterminate
+                            if (total > 0) {
+                                binding.progressBar.isIndeterminate = false
+                                binding.progressBar.max = total
+                                binding.progressBar.progress = current
                             }
                         }
-                    })
-                    
-                    val result = withContext(Dispatchers.IO) {
-                        analyzer.analyzeDatasetAndGenerateReport(
-                            datasetRootPath = datasetPathText,
-                            outputPath = outputPath
-                        )                    }
-
-                    if (result.startsWith("Phân tích hoàn tất!")) {
-                        val optimizationStats = calculateOptimizationStats(llmBatchSize, parallelBatches)
-                        binding.tvStatus.text = "🎉 Analysis Complete!\n\n$result\n\n$optimizationStats"
-                    } else {
-                        binding.tvStatus.text = result
                     }
-                } catch (e: Exception) {
-                    binding.tvStatus.text = "❌ Error: ${e.message}"
-                } finally {
-                    binding.progressBar.visibility = View.GONE
-                    binding.progressBar.isIndeterminate = true
-                    binding.btnStartAnalysis.isEnabled = true
-                    isAnalyzing = false
+                })
+                
+                val result = withContext(Dispatchers.IO) {
+                    batchAnalyzer?.analyzeDatasetAndGenerateReport(
+                        datasetRootPath = datasetPath,
+                        outputPath = outputPath
+                    ) ?: "Error: Analyzer not initialized"
                 }
+
+                if (result.startsWith("Phân tích hoàn tất!")) {
+                    val optimizationStats = calculateOptimizationStats(llmBatchSize, parallelBatches)
+                    binding.tvStatus.text = "🎉 Analysis Complete!\n\n$result\n\n$optimizationStats"
+                } else {
+                    binding.tvStatus.text = result
+                }
+                
+            } catch (e: OutOfMemoryError) {
+                binding.tvStatus.text = "❌ Out of Memory Error! Try reducing batch size to 3-4 and parallel batches to 1."
+            } catch (e: Exception) {
+                binding.tvStatus.text = "❌ Error: ${e.message}"
+            } finally {
+                // Cleanup
+                batchAnalyzer?.cleanup()
+                batchAnalyzer = null
+                binding.progressBar.visibility = View.GONE
+                binding.progressBar.isIndeterminate = true
+                binding.btnStartAnalysis.isEnabled = true
+                isAnalyzing = false
+                
+                // Force garbage collection
+                System.gc()
             }
         }
     }
@@ -477,13 +499,10 @@ class BatchAnalysisActivity : AppCompatActivity() {
         🚀 Parallel Processing: $parallelBatches batches simultaneously
         💡 API Call Reduction: ~${((llmBatchSize - 1) * 100 / llmBatchSize)}% fewer calls vs individual analysis
         📈 Expected Speed Improvement: ${llmBatchSize}x faster processing
-        🎯 Memory Efficiency: Smart caching prevents re-analysis of unchanged files
+        🎯 Memory Efficiency: Smart chunking and temp file cleanup
         """.trimIndent()
     }
-    /**
-     * Kiểm tra và tạo cấu trúc thư mục dataset nếu chưa tồn tại
-     * @return true nếu cấu trúc hợp lệ hoặc đã tạo thành công, false nếu có lỗi
-     */
+
     private fun checkAndCreateDatasetStructure(datasetDir: File): Boolean {
         val requiredDirs = listOf("safe", "malware")
         val existingDirs = datasetDir.listFiles()
@@ -491,21 +510,21 @@ class BatchAnalysisActivity : AppCompatActivity() {
             ?.map { it.name.lowercase() }
             ?: emptyList()
 
-        // Kiểm tra các thư mục con còn thiếu
+        // Check missing directories
         val missingDirs = requiredDirs.filter { requiredDir ->
             !existingDirs.any { it == requiredDir }
         }
 
         if (missingDirs.isEmpty()) {
-            return true // Cấu trúc hợp lệ
+            return true // Valid structure
         }
 
-        // Hiển thị thông báo và tạo thư mục còn thiếu
+        // Show message and create missing directories
         val message = StringBuilder("Dataset cần có cấu trúc thư mục con:\n")
         var creationSuccess = true
 
         missingDirs.forEach { dirName ->
-            val dirToCreate = File(datasetDir, dirName) // Tạo với tên viết hoa
+            val dirToCreate = File(datasetDir, dirName)
             message.append("- $dirName: ")
 
             val success = dirToCreate.mkdir()
@@ -519,5 +538,12 @@ class BatchAnalysisActivity : AppCompatActivity() {
 
         Toast.makeText(this, message.toString(), Toast.LENGTH_LONG).show()
         return creationSuccess
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Cleanup when activity is destroyed
+        batchAnalyzer?.cleanup()
+        batchAnalyzer = null
     }
 }
