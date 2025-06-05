@@ -50,7 +50,8 @@ object GeminiApiHelper {
         HƯỚNG DẪN ĐÁNH GIÁ
         =====================
         - Package name đáng tin cậy thường khớp với nhà phát triển thực sự.
-        - App name và Package name nếu là unknown thì auto là malware.
+        - Các package name giống như ngẫu nhiên, vô nghĩa thường không đáng tin cậy.
+        - App name và Package name nếu trống không, không có thông tin thì luôn là malware
         - Số lượng quyền không phải là yếu tố quyết định; nhiều ứng dụng hợp pháp cần nhiều quyền
         - Các quyền bất thường chỉ đáng lo nếu trái với chức năng dự kiến
         - Ứng dụng chỉnh sửa ảnh, game… có thể hợp lý khi dùng quyền lưu trữ, đọc media
@@ -204,22 +205,32 @@ object GeminiApiHelper {
         HƯỚNG DẪN ĐÁNH GIÁ
         =====================
         
-        QUYỀN AN TOÀN/BÌNH THƯỜNG (KHÔNG NGUY HIỂM):
-        - Quyền bộ nhớ (WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, MANAGE_EXTERNAL_STORAGE): Gần như không nguy hiểm, hầu hết ứng dụng đều cần
-        - Quyền mạng (INTERNET, ACCESS_NETWORK_STATE): Rất phổ biến và an toàn
-        - Quyền rung (VIBRATE): Hoàn toàn an toàn  
-        - Quyền đọc media (READ_MEDIA_IMAGES, READ_MEDIA_VIDEO, READ_MEDIA_AUDIO, READ_MEDIA_VISUAL_USER_SELECTED): Bình thường cho ứng dụng media
-        - Quyền foreground service: Bình thường cho ứng dụng cần chạy nền
-        - Quyền wake lock, boot completed: Phổ biến cho ứng dụng
-        
-        QUYỀN CẦN THẬN TRỌNG:
-        - SMS (SEND_SMS, READ_SMS, RECEIVE_SMS): Chỉ cần thiết cho ứng dụng tin nhắn
-        - Danh bạ (READ_CONTACTS, WRITE_CONTACTS): Chỉ cần cho ứng dụng liên hệ/xã hội  
-        - Vị trí (ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION): Chỉ cần cho ứng dụng bản đồ/vị trí
-        - Camera/Mic (CAMERA, RECORD_AUDIO): Chỉ cần cho ứng dụng có chức năng tương ứng
-        - Cuộc gọi (CALL_PHONE, READ_PHONE_STATE): Chỉ cần cho ứng dụng điện thoại
+        ✅ QUYỀN LUÔN AN TOÀN (không đáng lo):
+        • INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE
+        • WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, MANAGE_EXTERNAL_STORAGE
+        • READ_MEDIA_IMAGES, READ_MEDIA_VIDEO, READ_MEDIA_AUDIO, READ_MEDIA_VISUAL_USER_SELECTED
+        • VIBRATE, WAKE_LOCK, FOREGROUND_SERVICE
+        • POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED
+        • ACCESS_MEDIA_LOCATION (cho ứng dụng media)
+
+        ⚠️ QUYỀN CẦN KIỂM TRA BỐI CẢNH:
+        • READ_CONTACTS/WRITE_CONTACTS → OK cho: xã hội, email, backup, business
+        • ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION → OK cho: bản đồ, thời tiết, giao thông, camera (geotagging), delivery, dating
+        • CAMERA → OK cho: camera, video call, QR scanner, social media, shopping (product photos)
+        • RECORD_AUDIO → OK cho: voice recorder, video call, music apps, voice notes, language learning
+        • SEND_SMS/READ_SMS → OK cho: tin nhắn, 2FA, backup, business messaging
+        • CALL_PHONE/READ_PHONE_STATE → OK cho: dialer, emergency, business, VoIP
+        • SYSTEM_ALERT_WINDOW → OK cho: floating apps, overlay tools, accessibility
+        • GET_ACCOUNTS → OK cho: social, email, cloud sync
+
+        🔴 QUYỀN THỰC SỰ NGUY HIỂM (chỉ khi không phù hợp):
+        • Ứng dụng công cụ ĐƠN GIẢN (calculator, flashlight, timer) có SMS/Contacts/Location
+        • Game offline đơn giản có CALL_PHONE, SMS
+        • Ứng dụng thông tin/đọc báo có CAMERA, RECORD_AUDIO
         
         NGUYÊN TẮC ĐÁNH GIÁ:
+        - Các package name giống như ngẫu nhiên thường không đáng tin cậy.
+        - App name và Package name nếu trống không, không có thông tin thì luôn là malware
         - Package name đáng tin cậy thường khớp với nhà phát triển thực sự.
         - Số lượng quyền không phải là yếu tố quyết định; nhiều ứng dụng hợp pháp cần nhiều quyền
         - Các quyền bất thường chỉ đáng lo nếu trái với chức năng dự kiến
